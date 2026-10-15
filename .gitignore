@@ -1,0 +1,10 @@
+.DS_Store
+__pycache__/
+*.pyc
+*.bak
+.vscode/
+node_modules/
+# Client projects stay out of this public repo; only the demo is tracked.
+# To keep your own projects in a private fork, delete these two lines.
+projects/*
+!projects/demo-wall/

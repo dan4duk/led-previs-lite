@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>previs-lite</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header class="top">
+  <h1>previs-lite</h1>
+  <select id="projSel" aria-label="Project"></select>
+  <div id="camTabs" class="seg tabs" role="group" aria-label="Cameras"></div>
+  <span class="grow"></span>
+  <button id="matchBtn" class="btn" type="button">Match camera</button>
+  <button id="fsBtn" class="btn alt" type="button">&#x26F6; Full screen</button>
+  <button id="shotBtn" class="btn alt" type="button">Screenshot</button>
+  <button id="saveBtn" class="btn alt" type="button">Save project</button>
+</header>
+<main>
+  <aside id="side">
+    <section><h3>Content</h3><div id="contentBox"></div></section>
+    <section><h3>Display</h3>
+      <span class="lab">Panel brightness</span><div id="gGain" class="seg"></div>
+      <span class="lab">Photo brightness</span><div id="gDim" class="seg"></div>
+      <div id="gShow" class="seg one"></div>
+    </section>
+    <section><h3>Cameras</h3>
+      <div id="camList" class="camlist"></div>
+      <button id="addPhoto" class="btn alt" type="button">+ Add photo of the space</button>
+      <input id="photoFile" type="file" accept="image/*" hidden>
+      <p class="note">Drop a photo anywhere on the view too. Then press <b>Match camera</b> and click the same points in the 3D model and in the photo.</p>
+    </section>
+    <section class="note" id="help"></section>
+  </aside>
+  <section id="stage">
+    <div id="viewMain" class="view"><canvas id="cMain"></canvas><canvas id="oMain" class="ov"></canvas><div id="msgMain" class="msg"></div></div>
+    <div id="viewMatch" class="split" hidden>
+      <div class="view"><canvas id="cRef"></canvas><canvas id="oRef" class="ov"></canvas><div class="cap">1. Click a point on the 3D model</div></div>
+      <div class="view"><canvas id="cPhoto"></canvas><canvas id="oPhoto" class="ov"></canvas><div class="cap">2. Click the same point in the photo</div></div>
+    </div>
+    <div id="matchBar" hidden></div>
+    <div id="fsBar" aria-label="Cameras"></div>
+  </section>
+</main>
+<script type="module" src="js/main.js"></script>
+</body>
+</html>
