@@ -8,7 +8,7 @@
 </head>
 <body>
 <header class="top">
-  <h1>previs-lite</h1>
+  <h1>previs<span>-lite</span></h1>
   <select id="projSel" aria-label="Project"></select>
   <div id="camTabs" class="seg tabs" role="group" aria-label="Cameras"></div>
   <span class="grow"></span>
@@ -24,12 +24,14 @@
       <span class="lab">Panel brightness</span><div id="gGain" class="seg"></div>
       <span class="lab">Photo brightness</span><div id="gDim" class="seg"></div>
       <div id="gShow" class="seg one"></div>
+      <div id="flyBox" hidden><span class="lab">Fly speed (Shift = 3x)</span><div id="gFly" class="seg"></div><p class="note">W A S D move, Q / E down / up. Look with the mouse: hold the right button, or click the view to capture it (Esc lets go). Wheel changes speed.</p></div>
     </section>
+    <section><h3>3D model</h3><div id="modelBox"></div><input id="modelFile" type="file" accept=".obj" hidden></section>
     <section><h3>Cameras</h3>
       <div id="camList" class="camlist"></div>
       <button id="addPhoto" class="btn alt" type="button">+ Add photo of the space</button>
       <input id="photoFile" type="file" accept="image/*" hidden>
-      <p class="note">Drop a photo anywhere on the view too. Then press <b>Match camera</b> and click the same points in the 3D model and in the photo.</p>
+      <p class="note">Drop a photo (or a <b>.obj</b> model) on the view. Then press <b>Match camera</b> and click the same points in the 3D model and in the photo.</p>
     </section>
     <section class="note" id="help"></section>
   </aside>
@@ -40,6 +42,7 @@
       <div class="view"><canvas id="cPhoto"></canvas><canvas id="oPhoto" class="ov"></canvas><div class="cap">2. Click the same point in the photo</div></div>
     </div>
     <div id="matchBar" hidden></div>
+    <div id="fsHint"></div>
     <div id="fsBar" aria-label="Cameras"></div>
   </section>
 </main>

@@ -16,7 +16,7 @@ ROOT = os.path.dirname(os.path.abspath(__file__))
 APP, PROJECTS = os.path.join(ROOT, "app"), os.path.join(ROOT, "projects")
 TYPES = {".html": "text/html; charset=utf-8", ".js": "text/javascript", ".css": "text/css", ".json": "application/json", ".png": "image/png",
          ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".webp": "image/webp", ".gif": "image/gif", ".svg": "image/svg+xml", ".mp4": "video/mp4",
-         ".mov": "video/quicktime", ".webm": "video/webm", ".csv": "text/csv", ".xml": "text/xml", ".txt": "text/plain"}
+         ".mov": "video/quicktime", ".webm": "video/webm", ".csv": "text/csv", ".xml": "text/xml", ".txt": "text/plain", ".ttf": "font/ttf", ".otf": "font/otf", ".woff": "font/woff", ".woff2": "font/woff2"}
 
 
 # ---------------------------------------------------------------- Resolume Advanced Output XML -> screens
@@ -122,12 +122,15 @@ def cmd_check(a):
                 for x, y in q["uv"]:
                     if x < -1 or y < -1 or x > W + 1 or y > H + 1: problems.append("panel %s uv outside the %dx%d screen" % (q["id"], W, H)); break
     m = p.get("model")
-    if m:
-        mp = os.path.join(pdir, m)
-        if not os.path.exists(mp): problems.append("model file %s missing" % m)
+    mfile = m.get("file") if isinstance(m, dict) else m
+    if mfile:
+        mp = os.path.join(pdir, mfile)
+        if not os.path.exists(mp): problems.append("model file %s missing" % mfile)
+        elif mfile.lower().endswith(".obj"):
+            n = sum(1 for ln in open(mp, errors="ignore") if ln.startswith("f ")); print("  model: %s (OBJ, %d faces; units/up-axis/placement are set in the app)" % (mfile, n))
         else:
             segs = json.load(open(mp)); print("  model: %d line segments" % len(segs))
-    else: print("  model: none (add model.json: [[x1,y1,z1,x2,y2,z2], ...] in metres to give the camera matcher reference points)")
+    else: print("  model: none (drop a .obj onto the app, or add model.json: [[x1,y1,z1,x2,y2,z2], ...] in metres)")
     for c in p.get("cameras", []):
         if c.get("type") == "photo":
             ok = os.path.exists(os.path.join(pdir, c.get("photo", "")))
@@ -191,11 +194,12 @@ class Handler(BaseHTTPRequestHandler):
             pj = os.path.join(pdir, "project.json")
             if os.path.exists(pj): shutil.copy(pj, pj + ".bak")
             open(pj, "wb").write(body); return self.send_bytes(200, b'{"ok":true}')
-        if u.path == "/api/upload":                         # a dropped photo
+        if u.path == "/api/upload":                         # a dropped photo (photos/) or 3D model (models/)
             fn = re.sub(r"[^\w\-. ]", "_", os.path.basename((q.get("name") or ["photo.jpg"])[0]))
-            if os.path.splitext(fn)[1].lower() not in (".jpg", ".jpeg", ".png", ".webp"): return self.send_bytes(400, b'{"error":"photos only (jpg, png, webp)"}')
-            os.makedirs(os.path.join(pdir, "photos"), exist_ok=True); open(os.path.join(pdir, "photos", fn), "wb").write(body)
-            return self.send_bytes(200, json.dumps({"path": "photos/" + fn}).encode())
+            ext = os.path.splitext(fn)[1].lower(); sub = "photos" if ext in (".jpg", ".jpeg", ".png", ".webp") else "models" if ext == ".obj" else None
+            if not sub: return self.send_bytes(400, b'{"error":"photos (jpg, png, webp) or models (.obj) only"}')
+            os.makedirs(os.path.join(pdir, sub), exist_ok=True); open(os.path.join(pdir, sub, fn), "wb").write(body)
+            return self.send_bytes(200, json.dumps({"path": sub + "/" + fn}).encode())
         self.send_bytes(404, b'{"error":"not found"}')
 
     def ws(self):

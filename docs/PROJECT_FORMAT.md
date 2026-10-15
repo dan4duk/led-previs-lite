@@ -5,6 +5,7 @@ A project is a folder `projects/<name>/`:
 ```
 project.json        screens, panels, cameras (written by `previs.py new`, edited by the app and by hand)
 model.json          optional: wireframe of the space, [[x1,y1,z1,x2,y2,z2], ...] in metres
+models/             an imported .obj (drop it on the app; project.json points to it)
 photos/             photos of the space (the app saves dropped photos here)
 sources/            the Resolume XML and positions CSV the project was made from (for reference)
 ```
@@ -52,6 +53,7 @@ Each panel has a **normal** (the direction its face points, towards the audience
 - **panel.pos** is the centre of the panel in metres; **size** is `[width, height]` in metres.
 - **screen.ndi** (optional) is a text filter: the live source whose name contains it is connected automatically.
 - **Orbit cameras**: `target`, `distance` (m), `yaw` (degrees, 0 = looking from the front/south towards +y), `pitch` (degrees, negative looks up from below), `fov` (vertical degrees).
+- **Fly cameras**: `{ "type": "fly", "pos": [x, y, z], "yaw": radians (0 = looking north, +y), "pitch": radians, "fov": degrees }`. Every project gets one called "Free fly"; flying moves it, and Save keeps where it was left.
 - **Photo cameras**: `P` is the solved 3x4 projection matrix, row-major, in the photo's own pixel space (written by **Apply camera**). `pairs` are the clicked point pairs, kept so you can re-match later.
 
 ## panels.csv (input to `previs.py new`)
@@ -67,6 +69,22 @@ Header row required. Columns (case-insensitive):
 | `ux`, `uy`, `uz` | optional image-up direction (default from `--facing`) |
 
 `--facing` is one of `front, back, east, west, up, down` and sets the default normal and up for every panel.
+
+## Model: an imported .obj
+
+Drop a Wavefront `.obj` on the app. It is copied to `models/` and `project.json` gets:
+
+```json
+"model": { "file": "models/venue.obj", "format": "obj", "units": "cm", "up": "y", "rot": 0, "place": "asis", "display": "lines" }
+```
+
+- `units`: `m`, `cm`, `mm`, `ft` or `in`, the unit the file was written in (guessed from its size).
+- `up`: `z` or `y`, the up axis of the file (guessed: the shorter of Y and Z is usually the height). Y-up files (Blender's default export) are turned into the project's Z-up.
+- `rot`: 0, 90, 180 or 270 degrees about Z.
+- `place`: `asis` (keep the file's own coordinates, best when the model was built in the project's frame), `floor` (lowest point at z = 0) or `centre` (centred on x and y, floor at z = 0).
+- `display`: `lines` (the sharp edges only) or `solid` (also a dark two-sided solid).
+
+Only faces and `l` line elements are read; materials, textures and normals are ignored. Sharp edges are boundary edges and edges where neighbouring faces differ by more than 28 degrees, so a quad's diagonal does not show.
 
 ## model.json
 

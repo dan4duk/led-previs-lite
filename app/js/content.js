@@ -19,7 +19,7 @@ export class TestPattern {
       if (w > 34) { ctx.fillStyle = on ? "#000" : "#fff"; ctx.font = `${Math.max(9, Math.min(18, w / 7))}px sans-serif`; ctx.textAlign = "center"; ctx.textBaseline = "middle"; ctx.fillText(p.id, (Math.min(...xs) + Math.max(...xs)) / 2, (Math.min(...ys) + Math.max(...ys)) / 2); }
     });
     const sx = ((t * 0.18) % 1) * W; ctx.fillStyle = "rgba(255,255,255,.55)"; ctx.fillRect(sx, 0, Math.max(2, 4 * k), H);
-    ctx.strokeStyle = "#f2b34a"; ctx.lineWidth = 3; ctx.strokeRect(1.5, 1.5, W - 3, H - 3);
+    ctx.strokeStyle = "#99e836"; ctx.lineWidth = 3; ctx.strokeRect(1.5, 1.5, W - 3, H - 3);
   }
 }
 

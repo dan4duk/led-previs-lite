@@ -8,3 +8,6 @@ node_modules/
 # To keep your own projects in a private fork, delete these two lines.
 projects/*
 !projects/demo-wall/
+
+# Licensed font (Neue Machina, commercial): keep local, never publish
+app/fonts/NeueMachina*

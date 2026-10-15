@@ -36,7 +36,7 @@ python3 previs.py check my-venue
 ```
 
    No positions yet? Leave out `--positions` and each screen is laid out as a flat wall from its own pixel map (`--pixel-pitch-mm` sets the size). Handy for a first look.
-4. Put a rough 3D model of the space in `projects/my-venue/model.json` (`[[x1,y1,z1,x2,y2,z2], ...]` line segments in metres: floor corners, walls, stage, truss). It is only used for context and to pick reference points when matching photos. **Ask Claude to build it from your photos and measurements.** `tools/modeling.py` has helpers.
+4. Add a 3D model of the space. **Drop a `.obj` file on the app** (or press **Import .obj** under 3D model). Its units and up axis are guessed; if it looks wrong, fix **Units**, **Up axis**, **Rotate** and **Place** with the buttons (they are saved with the project). **Lines** shows the sharp edges, **Solid** draws it as a dark solid that hides what is behind it. No model yet? Ask Claude to build one from your photos and measurements (an OBJ, or a plain `model.json` of line segments; `tools/modeling.py` has helpers).
 5. Open the app, pick the project and click **+ Add photo of the space** (or drop a photo on the view).
 
 ## 3. Match a photo to the model
@@ -54,9 +54,12 @@ python3 previs.py check my-venue
 | Video / image | **Video / image** on a screen. Use a full screen-sized render of your content (the same pixel map Resolume outputs). |
 | Look dark / bright | **Panel brightness** and **Photo brightness**. Dimming the photo makes the LEDs read better. |
 | Full screen | **Full screen** or **F**. Camera buttons appear at the bottom; **1-9** also switch cameras. |
+| Fly around | Pick the **Free fly** camera: **W A S D** move, **Q / E** down and up, **Shift** faster. Look with the mouse: hold the right button and drag, or click the view to capture the pointer (Esc lets go). The wheel changes speed. It starts from where the camera you were just using is. |
 | Screenshot | **Screenshot** saves a PNG of the current view. |
 
 Orbit cameras: drag to orbit, shift/right-drag to pan, wheel to zoom.
+
+**Look:** the app uses the SliceFX look (flat, square, one lime accent). Headings and buttons use Neue Machina, labels use Manrope; see `app/fonts/README.md`.
 
 ## Notes
 

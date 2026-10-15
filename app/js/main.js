@@ -1,13 +1,15 @@
 // previs-lite app: project loading, cameras (orbit and photo-matched), content sources, camera matching, full screen.
-import { lookAtP, remapP, project, solveCamera, cross, norm, sub, add, mul } from "./math.js";
+import { lookAtP, remapP, project, solveCamera, cameraCentre, cross, norm, sub, add, mul } from "./math.js";
+import { parseOBJ, featureEdges, transformModel, guessUnits, guessUp, extents, UNITS } from "./obj.js";
 import { Renderer, fitPhoto } from "./render.js";
 import { TestPattern, fileSource, LiveClient } from "./content.js";
 
 const $ = (id) => document.getElementById(id);
-const dpr = () => Math.min(2, window.devicePixelRatio || 1);
+const dpr = () => Math.min(2, window.devicePixelRatio || 1, Math.sqrt(2.4e6 / Math.max(1, window.innerWidth * window.innerHeight)));   // ~2.4 megapixels at most
 const S = { name: null, proj: null, cam: 0, gain: 1, dim: 1, outline: true, model: true, content: [], photos: new Map(), mode: "view", match: null, t0: performance.now(), server: true };
+S.obj = null; S.modelMesh = null; S.modelSegs = null; S.flySpeed = 4;
 const R = { main: null, ref: null, photo: null };
-const COLORS = ["#ff5d5d", "#ffb347", "#f6e05e", "#6fe3a0", "#6fd8ff", "#8b9dff", "#d58bff", "#ff8bd1"];
+const COLORS = ["#99e836", "#e8493a", "#f6c453", "#5ec8ff", "#fffcf9", "#d58bff", "#ff8bd1", "#ff9d4d"];
 
 // ---------------------------------------------------------------- small UI helpers
 function seg(id, items, get, set) {
@@ -19,8 +21,8 @@ function paint() {
   document.querySelectorAll(".seg").forEach((box) => { if (box._get) { const cur = String(box._get()); box.querySelectorAll(".sb").forEach((b) => b.setAttribute("aria-pressed", String(b.dataset.v === cur))); } });
 }
 function toast(text, bad) {
-  let t = $("toast"); if (!t) { t = document.createElement("div"); t.id = "toast"; t.style.cssText = "position:fixed;left:50%;bottom:24px;transform:translateX(-50%);z-index:200;padding:9px 16px;border-radius:8px;background:#0e1017;border:1px solid #222637;font:13px system-ui;transition:opacity .3s"; document.body.appendChild(t); }
-  t.textContent = text; t.style.color = bad ? "#ff7a7a" : "#ecebe6"; t.style.opacity = 1; clearTimeout(t._t); t._t = setTimeout(() => (t.style.opacity = 0), 3200);
+  let t = $("toast"); if (!t) { t = document.createElement("div"); t.id = "toast"; t.style.cssText = "position:fixed;left:50%;bottom:24px;transform:translateX(-50%);z-index:200;padding:9px 16px;background:#151514;border:1px solid #363633;font:500 12px Manrope,system-ui,sans-serif;transition:opacity .3s"; document.body.appendChild(t); }
+  t.textContent = text; t.style.color = bad ? "#e8493a" : "#fffcf9"; t.style.opacity = 1; clearTimeout(t._t); t._t = setTimeout(() => (t.style.opacity = 0), 3200);
 }
 function sizeCanvas(cv, ov) {
   const d = dpr(), w = Math.max(2, Math.round(cv.clientWidth * d)), h = Math.max(2, Math.round(cv.clientHeight * d));
@@ -52,19 +54,31 @@ async function loadProject(name) {
   S.name = name; S.proj = await (await api(`/projects/${encodeURIComponent(name)}/project.json`)).json();
   S.proj.cameras = S.proj.cameras && S.proj.cameras.length ? S.proj.cameras : [{ name: "Orbit", type: "orbit", target: [0, 0, 2], distance: 18, yaw: 35, pitch: 18, fov: 45 }];
   S.cam = 0; S.photos.clear();
-  S.modelSegs = null;
-  if (S.proj.model) { try { S.modelSegs = Float32Array.from(await (await api(`/projects/${encodeURIComponent(name)}/${S.proj.model}`)).json().then((a) => a.flat())); } catch (e) { toast("model file not found: " + S.proj.model, true); } }
+  S.modelSegs = null; S.modelMesh = null; S.obj = null;
+  const mdl = S.proj.model, mfile = mdl && (typeof mdl === "string" ? mdl : mdl.file);
+  if (mfile) {
+    try {
+      const url = `/projects/${encodeURIComponent(name)}/${mfile}`;
+      if (/\.obj$/i.test(mfile)) setObj(await (await api(url)).text(), mfile, typeof mdl === "object" ? mdl : {}, true);
+      else S.modelSegs = Float32Array.from((await (await api(url)).json()).flat());
+    } catch (e) { toast("Could not load the model: " + mfile, true); }
+  }
   S.content = S.proj.screens.map((sc) => ({ mode: "test", test: new TestPattern(sc), file: null, live: null, status: "" }));
   [R.main, R.ref, R.photo].filter(Boolean).forEach(setupRenderer);
   const b = R.main.bounds; S.proj.cameras.forEach((c) => { if (c.type === "orbit" && c.target && c.distance == null) c.distance = b.radius * 2.2; });
+  if (!S.proj.cameras.some((c) => c.type === "fly")) {   // a free-fly camera to walk around with WASD, standing in front and looking at the middle
+    const c = b.centre, dist = Math.max(3, b.radius * 0.55), eh = 1.7;
+    S.proj.cameras.push({ name: "Free fly", type: "fly", pos: [c[0], c[1] - dist, eh], yaw: 0, pitch: +Math.atan2(c[2] - eh, dist).toFixed(3), fov: 60 });
+  }
   buildUI(); paint();
 }
-function setupRenderer(r) { r.setScreens(S.proj.screens); r.setModel(S.modelSegs); r._photoKey = null; }
+function setupRenderer(r) { r.setScreens(S.proj.screens); r.setModel(S.modelSegs); r.setMesh(solidOn() ? S.modelMesh : null); r._photoKey = null; }
+const solidOn = () => !!(S.obj && S.obj.opts.display === "solid");
 
-async function saveProject() {
+async function saveProject(quiet) {
   const text = JSON.stringify(S.proj, null, 1);
-  try { await api(`/api/save?project=${encodeURIComponent(S.name)}`, { method: "POST", body: text }); toast("Saved projects/" + S.name + "/project.json"); }
-  catch (e) { const a = document.createElement("a"); a.href = URL.createObjectURL(new Blob([text], { type: "application/json" })); a.download = "project.json"; a.click(); toast("No server to save to: downloaded project.json instead", true); }
+  try { await api(`/api/save?project=${encodeURIComponent(S.name)}`, { method: "POST", body: text }); if (!quiet) toast("Saved projects/" + S.name + "/project.json"); }
+  catch (e) { if (quiet) return; const a = document.createElement("a"); a.href = URL.createObjectURL(new Blob([text], { type: "application/json" })); a.download = "project.json"; a.click(); toast("No server to save to: downloaded project.json instead", true); }
 }
 
 // ---------------------------------------------------------------- cameras
@@ -158,17 +172,19 @@ function buildUI() {
   seg("gDim", [[1, "100%"], [0.7, "70%"], [0.45, "45%"], [0.25, "25%"], [0, "Off"]], () => S.dim, (v) => (S.dim = v));
   const sh = $("gShow"); sh.innerHTML = "";
   [["outline", "Panel outlines"], ["model", "Model lines"]].forEach(([k, label]) => { const b = document.createElement("button"); b.type = "button"; b.className = "sb"; b.textContent = label; b.onclick = () => { S[k] = !S[k]; b.setAttribute("aria-pressed", String(S[k])); }; b.setAttribute("aria-pressed", String(S[k])); sh.appendChild(b); });
-  buildCamUI(); buildContentUI();
+  seg("gFly", [[1.5, "Slow"], [4, "Normal"], [10, "Fast"]], () => { const v = [1.5, 4, 10].find((x) => Math.abs(S.flySpeed - x) / x < 0.2); return v || 0; }, (v) => (S.flySpeed = v));
+  buildCamUI(); buildContentUI(); buildModelUI();
   $("help").innerHTML = `Keys: <b>1&ndash;9</b> camera, <b>F</b> full screen, <b>M</b> match camera.<br>Drag to orbit, shift-drag to pan, wheel to zoom (orbit cameras).<br>Project folder: <code>projects/${S.name}/</code>`;
 }
 function buildCamUI() {
   const cams = S.proj.cameras, tabs = $("camTabs"); tabs.innerHTML = ""; $("fsBar").innerHTML = "";
   [tabs, $("fsBar")].forEach((host) => cams.forEach((c, i) => { const b = document.createElement("button"); b.type = "button"; b.className = "sb"; b.textContent = c.name; b.dataset.cam = i; b.onclick = () => selectCam(i); host.appendChild(b); }));
+  [[1.5, "Slow"], [4, "Normal"], [10, "Fast"]].forEach(([v, label]) => { const b = document.createElement("button"); b.type = "button"; b.className = "sb"; b.textContent = label; b.title = "Fly speed (Shift = 3x, wheel adjusts)"; b.dataset.fly = v; b.onclick = () => { S.flySpeed = v; }; $("fsBar").appendChild(b); });
   const ex = document.createElement("button"); ex.type = "button"; ex.className = "sb"; ex.textContent = "Exit ✕"; ex.onclick = () => document.exitFullscreen && document.fullscreenElement ? document.exitFullscreen() : toggleFS(); $("fsBar").appendChild(ex);
   const list = $("camList"); list.innerHTML = "";
   cams.forEach((c, i) => {
     const row = document.createElement("div"); row.className = "cam";
-    const st = c.type === "orbit" ? ["orbit", ""] : c.P ? [`matched, ${c.rms != null ? c.rms.toFixed(1) + " px" : "ok"}`, "ok"] : ["not matched yet", "warn"];
+    const st = c.type === "orbit" ? ["orbit", ""] : c.type === "fly" ? ["fly: WASD", ""] : c.P ? [`matched, ${c.rms != null ? c.rms.toFixed(1) + " px" : "ok"}`, "ok"] : ["not matched yet", "warn"];
     row.innerHTML = `<div>${c.name} <span class="st ${st[1]}">${st[0]}</span></div><div></div>`;
     const act = row.lastChild;
     if (c.type === "photo") { const m = document.createElement("button"); m.textContent = c.P ? "Re-match" : "Match"; m.onclick = () => { S.cam = i; enterMatch(); }; act.appendChild(m); }
@@ -177,8 +193,24 @@ function buildCamUI() {
   });
   paint2();
 }
-function paint2() { document.querySelectorAll("[data-cam]").forEach((b) => b.setAttribute("aria-pressed", String(+b.dataset.cam === S.cam))); }
-function selectCam(i) { if (S.mode === "match") return; S.cam = i; paint2(); }
+function paint2() {
+  document.querySelectorAll("[data-cam]").forEach((b) => b.setAttribute("aria-pressed", String(+b.dataset.cam === S.cam)));
+  const cam = S.proj && S.proj.cameras[S.cam], fly = !!(cam && cam.type === "fly" && S.mode === "view");
+  const fb = $("flyBox"); if (fb) fb.hidden = !fly;
+  document.querySelectorAll("#fsBar [data-fly]").forEach((b) => { b.hidden = !fly; b.setAttribute("aria-pressed", String(Math.abs(S.flySpeed - +b.dataset.fly) / +b.dataset.fly < 0.2)); });
+  const h = $("fsHint"); if (h && cam) h.textContent = S.name + " \u00b7 " + cam.name + (fly ? "   WASD move \u00b7 Q/E down/up \u00b7 look: right-drag or click \u00b7 Shift fast \u00b7 wheel speed \u00b7 Esc" : "");
+}
+function selectCam(i) {
+  if (S.mode === "match") return;
+  const prev = S.proj.cameras[S.cam], cam = S.proj.cameras[i];
+  if (cam.type === "fly" && prev && prev !== cam) { const d = camPose(prev); if (d) { cam.pos = d.eye; cam.yaw = Math.atan2(d.dir[0], d.dir[1]); cam.pitch = Math.asin(Math.max(-1, Math.min(1, d.dir[2]))); } }
+  S.cam = i; paint2();
+}
+function camPose(cam) {   // where a camera is and which way it looks, in world space
+  if (cam.type === "orbit") { const eye = orbitEye(cam); return { eye, dir: norm(sub(cam.target, eye)) }; }
+  if (cam.type === "photo" && cam.P) { const c = cameraCentre(cam.P); if (c) return { eye: c, dir: norm([cam.P[8], cam.P[9], cam.P[10]]) }; }
+  return null;
+}
 
 // ---------------------------------------------------------------- rendering loop
 function loop(now) {
@@ -197,9 +229,10 @@ function drawMain() {
     const img = getPhoto(cam.photo); syncPhoto(R.main, img, img ? cam.photo : null);
     if (img) fit = fitPhoto(img.naturalWidth, img.naturalHeight, W, H);
     if (cam.P && fit) P = remapP(cam.P, fit.s, fit.ox, fit.oy); else { P = lookAtP([0, -10, 2], [0, 0, 2], [0, 0, 1], 45, W, H); noPanels = true; text = img ? "This photo is not matched yet.<br>Press <b>Match camera</b>." : "Loading photo..."; }
-  } else { syncPhoto(R.main, null, null); P = orbitP(cam, W, H); }
+  } else if (cam.type === "fly") { syncPhoto(R.main, null, null); P = flyP(cam, W, H); }
+  else { syncPhoto(R.main, null, null); P = orbitP(cam, W, H); }
   msg.style.display = text ? "block" : "none"; if (text) msg.innerHTML = text;
-  R.main.render({ P, photoFit: fit, gain: S.gain, dim: S.dim, outline: S.outline, model: S.model, noPanels });
+  R.main.render({ P, photoFit: fit, gain: S.gain, dim: S.dim, outline: S.outline, model: S.model, noPanels, solid: cam.type !== "photo" });
 }
 orbitControl($("oMain"), () => (S.mode === "view" && S.proj.cameras[S.cam].type === "orbit" ? S.proj.cameras[S.cam] : null));
 
@@ -260,7 +293,7 @@ function drawMatch() {
   const M = S.match, [W1, H1] = sizeCanvas($("cRef"), $("oRef")), [W2, H2] = sizeCanvas($("cPhoto"), $("oPhoto"));
   R.ref.resize(W1, H1); R.photo.resize(W2, H2); bindContent(R.ref); bindContent(R.photo);
   const refP = orbitP(M.orbit, W1, H1);
-  R.ref.render({ P: refP, gain: S.gain, outline: true, model: true });
+  R.ref.render({ P: refP, gain: S.gain, outline: true, model: true, solid: true });
   const fit = photoFitFor(W2, H2); syncPhoto(R.photo, fit && fit.img, fit ? M.cam.photo : null);
   const photoP = M.sol && fit ? remapP(M.sol.P, fit.s, fit.ox, fit.oy) : lookAtP([0, -10, 2], [0, 0, 2], [0, 0, 1], 45, W2, H2);
   R.photo.render({ P: photoP, photoFit: fit, gain: S.gain, dim: S.dim, outline: true, model: S.model, noPanels: !M.sol });
@@ -331,7 +364,10 @@ $("addPhoto").onclick = () => $("photoFile").click();
 $("photoFile").onchange = (e) => { if (e.target.files[0]) addPhoto(e.target.files[0]); e.target.value = ""; };
 ["dragover", "dragenter"].forEach((ev) => $("stage").addEventListener(ev, (e) => { e.preventDefault(); $("stage").classList.add("drop"); }));
 ["dragleave", "drop"].forEach((ev) => $("stage").addEventListener(ev, () => $("stage").classList.remove("drop")));
-$("stage").addEventListener("drop", (e) => { e.preventDefault(); const f = [...e.dataTransfer.files].find((x) => /^image\//.test(x.type)); if (f) addPhoto(f); });
+$("stage").addEventListener("drop", (e) => {
+  e.preventDefault(); const files = [...e.dataTransfer.files], obj = files.find((x) => /\.obj$/i.test(x.name)), img = files.find((x) => /^image\//.test(x.type));
+  if (obj) importModel(obj); else if (img) addPhoto(img); else if (files.length) toast("Drop a photo (jpg, png) or a 3D model (.obj).", true);
+});
 
 let idleT = null;
 function wake() { const st = $("stage"); st.classList.remove("idle"); clearTimeout(idleT); if (document.fullscreenElement || st.classList.contains("fs")) idleT = setTimeout(() => st.classList.add("idle"), 3500); }
@@ -351,9 +387,106 @@ document.addEventListener("keydown", (e) => {
   if (e.key === "f" || e.key === "F") { e.preventDefault(); toggleFS(); }
   else if (e.key === "m" || e.key === "M") { S.mode === "match" ? exitMatch() : enterMatch(); }
   else if (e.key === "Escape" && S.mode === "match") exitMatch();
-  else if (e.key === "Escape" && $("stage").classList.contains("fs")) toggleFS();
+  else if (e.key === "Escape" && $("stage").classList.contains("fs") && !document.pointerLockElement) toggleFS();
   else if (e.key >= "1" && e.key <= "9" && S.mode === "view" && S.proj.cameras[+e.key - 1]) selectCam(+e.key - 1);
   else if ((e.key === "Backspace" || e.key === "z") && S.mode === "match") { const M = S.match; if (M.pending) M.pending = null; else M.pairs.pop(); resolve(); buildMatchBar(); }
 });
+
+// ---------------------------------------------------------------- 3D model: import a .obj (drop it on the view or choose it), then fix units / up axis / placement
+function setObj(text, file, saved, quiet) {
+  const parsed = parseOBJ(text);
+  if (!parsed.tris.length && !parsed.lines.length) throw new Error("No faces or lines found in that OBJ.");
+  S.obj = { file, parsed, edges: featureEdges(parsed), guessed: !saved.units,
+    opts: { units: saved.units || guessUnits(parsed.pos), up: saved.up || guessUp(parsed.pos), rot: saved.rot || 0, place: saved.place || "asis", display: saved.display || "lines" } };
+  rebuildObj();
+}
+function rebuildObj() {
+  const t = transformModel(S.obj.parsed, S.obj.edges, S.obj.opts);
+  S.modelSegs = t.segments; S.modelMesh = t.mesh; S.obj.size = t.size; S.obj.lo = t.lo; S.obj.hi = t.hi; S.obj.tris = S.obj.parsed.tris.length / 3;
+  S.proj.model = Object.assign({ file: S.obj.file, format: "obj" }, S.obj.opts);
+  [R.main, R.ref, R.photo].filter(Boolean).forEach((r) => { r.setModel(S.modelSegs); r.setMesh(solidOn() ? S.modelMesh : null); });
+  if (S.match) S.match.cands = candidates();
+  buildModelUI();
+}
+function schedSave() { clearTimeout(S._st); S._st = setTimeout(() => saveProject(true), 700); }
+function frameModel() {   // point the current camera at the new model
+  const c = S.proj.cameras[S.cam], o = S.obj; if (!c || !o) return;
+  const ctr = [0, 1, 2].map((k) => (o.lo[k] + o.hi[k]) / 2), big = Math.max(...o.size);
+  if (c.type === "orbit") { c.target = ctr; c.distance = big * 1.3; }
+  else if (c.type === "fly") { c.pos = [ctr[0], ctr[1] - big * 0.9, Math.min(1.7, ctr[2])]; c.yaw = 0; c.pitch = 0.1; }
+}
+async function importModel(file) {
+  if (!S.proj) return; if (!/\.obj$/i.test(file.name)) { toast("That is not an .obj file.", true); return; }
+  toast("Reading " + file.name + "...");
+  let text, path;
+  try { text = await file.text(); } catch (e) { toast("Could not read that file.", true); return; }
+  try { const r = await api(`/api/upload?project=${encodeURIComponent(S.name)}&name=${encodeURIComponent(file.name)}`, { method: "POST", body: text }); path = (await r.json()).path; }
+  catch (e) { toast("Could not copy the model into the project folder. Is the server running?", true); return; }
+  try { setObj(text, path, {}); } catch (e) { toast(e.message, true); return; }
+  frameModel(); saveProject(true);
+  const o = S.obj.opts, z = S.obj.size;
+  toast(`Imported ${file.name}: ${Math.round(S.obj.tris).toLocaleString()} triangles, ${z.map((v) => v.toFixed(1)).join(" x ")} m. Units (${o.units}) and up axis (${o.up.toUpperCase()}) were guessed: fix them under 3D model if it looks wrong.`);
+}
+function buildModelUI() {
+  const box = $("modelBox"); if (!box) return; box.innerHTML = ""; const o = S.obj;
+  if (!o) {
+    const m = S.proj && S.proj.model, f = m && (typeof m === "string" ? m : m.file);
+    box.innerHTML = `<div class="status" style="margin:0 0 8px">${f ? "<b>" + f + "</b> (line segments)" : "No 3D model yet."}</div><button id="modelPick" class="btn alt" type="button">Import .obj…</button><p class="note">Or drop a <b>.obj</b> file on the view. You can fix units, up axis and placement afterwards.</p>`;
+    $("modelPick").onclick = () => $("modelFile").click(); return;
+  }
+  box.innerHTML = `<div class="status" id="modelInfo" style="margin:0 0 6px"></div><span class="lab">Units in the file</span><div id="gMUnits" class="seg"></div><span class="lab">Up axis</span><div id="gMUp" class="seg"></div>
+    <span class="lab">Rotate</span><div id="gMRot" class="seg"></div><span class="lab">Place</span><div id="gMPlace" class="seg"></div><span class="lab">Show</span><div id="gMShow" class="seg"></div>
+    <div class="seg" style="margin-top:10px"><button id="modelPick" class="sb" type="button">Replace .obj…</button><button id="modelDel" class="sb" type="button">Remove</button></div>`;
+  $("modelInfo").textContent = `${o.file.split("/").pop()} · ${Math.round(o.tris).toLocaleString()} triangles · ${o.size.map((v) => v.toFixed(1)).join(" × ")} m`;
+  const set = (k) => (v) => { o.opts[k] = v; o.guessed = false; rebuildObj(); schedSave(); };
+  seg("gMUnits", Object.keys(UNITS).map((u) => [u, u]), () => o.opts.units, set("units"));
+  seg("gMUp", [["z", "Z up"], ["y", "Y up"]], () => o.opts.up, set("up"));
+  seg("gMRot", [[0, "0°"], [90, "90°"], [180, "180°"], [270, "270°"]], () => o.opts.rot, set("rot"));
+  seg("gMPlace", [["asis", "As exported"], ["floor", "On floor"], ["centre", "Centre + floor"]], () => o.opts.place, set("place"));
+  seg("gMShow", [["lines", "Lines"], ["solid", "Solid"]], () => o.opts.display, set("display"));
+  $("modelPick").onclick = () => $("modelFile").click();
+  $("modelDel").onclick = () => { if (!confirm("Remove the model from this project? (The .obj file stays in the project folder.)")) return; S.obj = null; S.modelSegs = null; S.modelMesh = null; S.proj.model = null; [R.main, R.ref, R.photo].filter(Boolean).forEach((r) => { r.setModel(null); r.setMesh(null); }); buildModelUI(); saveProject(true); };
+  paint();
+}
+$("modelFile").onchange = (e) => { if (e.target.files[0]) importModel(e.target.files[0]); e.target.value = ""; };
+
+// ---------------------------------------------------------------- free-fly camera: WASD + Q/E to move, mouse to look (like the Unreal editor)
+const flyDir = (c) => [Math.sin(c.yaw) * Math.cos(c.pitch), Math.cos(c.yaw) * Math.cos(c.pitch), Math.sin(c.pitch)];
+function flyP(c, W, H) { const d = flyDir(c); return lookAtP(c.pos, [c.pos[0] + d[0], c.pos[1] + d[1], c.pos[2] + d[2]], [0, 0, 1], c.fov || 60, W, H); }
+const FLYKEYS = {}, LOOK = { ArrowLeft: [-1, 0], ArrowRight: [1, 0], ArrowUp: [0, 1], ArrowDown: [0, -1] }; let flyLast = performance.now(), flyDrag = null;
+function activeFly() { const c = S.proj && S.proj.cameras[S.cam]; return c && c.type === "fly" && S.mode === "view" ? c : null; }
+function flyTick(now) {
+  const dt = Math.min(0.25, (now - flyLast) / 1000); flyLast = now; const c = activeFly();
+  if (c) {
+    const f = flyDir(c), r = [Math.cos(c.yaw), -Math.sin(c.yaw), 0], k = FLYKEYS, sp = S.flySpeed * (k.ShiftLeft || k.ShiftRight ? 3 : 1) * dt;
+    const fw = (k.KeyW ? 1 : 0) - (k.KeyS ? 1 : 0), st = (k.KeyD ? 1 : 0) - (k.KeyA ? 1 : 0), ud = (k.KeyE ? 1 : 0) - (k.KeyQ ? 1 : 0);
+    for (let i = 0; i < 3; i++) c.pos[i] += (f[i] * fw + r[i] * st) * sp;
+    c.pos[2] += ud * sp;
+    for (const code in LOOK) if (k[code]) { c.yaw += LOOK[code][0] * 1.6 * dt; c.pitch = Math.max(-1.5, Math.min(1.5, c.pitch + LOOK[code][1] * 1.2 * dt)); }
+  }
+  requestAnimationFrame(flyTick);
+}
+function look(c, dx, dy) { c.yaw += dx * 0.0032; c.pitch = Math.max(-1.5, Math.min(1.5, c.pitch - dy * 0.0032)); }
+window.addEventListener("keydown", (e) => {
+  const t = e.target && e.target.tagName; if (!activeFly() || t === "INPUT" || t === "SELECT" || t === "TEXTAREA" || e.metaKey || e.ctrlKey || e.altKey) return;
+  if (/^(Key[WASDQE]|Shift(Left|Right)|Arrow(Left|Right|Up|Down))$/.test(e.code)) { FLYKEYS[e.code] = true; if (e.code.indexOf("Arrow") === 0) e.preventDefault(); }
+});
+window.addEventListener("keyup", (e) => { delete FLYKEYS[e.code]; });
+window.addEventListener("blur", () => { for (const k in FLYKEYS) delete FLYKEYS[k]; });
+(function () {
+  const el = $("oMain");
+  el.addEventListener("contextmenu", (e) => { if (activeFly()) e.preventDefault(); });
+  el.addEventListener("mousedown", (e) => { if (activeFly() && e.button === 2) { flyDrag = { x: e.clientX, y: e.clientY }; e.preventDefault(); } });
+  window.addEventListener("mouseup", (e) => { if (e.button === 2) flyDrag = null; });
+  window.addEventListener("mousemove", (e) => {
+    const c = activeFly(); if (!c) return;
+    if (document.pointerLockElement === el) look(c, e.movementX, e.movementY);
+    else if (flyDrag) { look(c, e.clientX - flyDrag.x, e.clientY - flyDrag.y); flyDrag.x = e.clientX; flyDrag.y = e.clientY; }
+  });
+  el.addEventListener("click", (e) => { if (activeFly() && e.button === 0 && !document.pointerLockElement && el.requestPointerLock) { try { const p = el.requestPointerLock(); if (p && p.catch) p.catch(() => {}); } catch (x) {} } });
+  el.addEventListener("wheel", (e) => { if (activeFly()) { e.preventDefault(); S.flySpeed = Math.max(0.4, Math.min(30, S.flySpeed * Math.exp(-e.deltaY * 0.0012))); } }, { passive: false });
+})();
+requestAnimationFrame(flyTick);
+
 window.previs = { S, R };   // handy for debugging and automated tests from the console
 init().catch((e) => { console.error(e); toast(String(e.message || e), true); });
